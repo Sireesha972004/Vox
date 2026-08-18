@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.tts import AUDIO_DIR, generate_audio_file_sync
+from app.tts import AUDIO_DIR, audio_path, generate_audio_file_sync
 
 
 app = FastAPI(title="Vox API")
@@ -314,6 +314,20 @@ def get_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str, s
     if not job or job.get("email") != email:
         return {"chunkId": chunk_id, "status": "unknown"}
     return job
+
+
+@app.delete("/api/chunks/{chunk_id}")
+def delete_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str, str]:
+    job = chunks.get(chunk_id)
+    if not job or job.get("email") != email:
+        raise HTTPException(status_code=404, detail="Audio not found.")
+    with jobs_lock:
+        chunks.pop(chunk_id, None)
+        persist_chunks()
+    path = audio_path(chunk_id)
+    if path.exists():
+        path.unlink()
+    return {"chunkId": chunk_id, "status": "deleted"}
 
 
 app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")

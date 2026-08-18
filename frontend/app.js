@@ -21,6 +21,9 @@ const template = document.querySelector('#job-template');
 const voiceForm = document.querySelector('#voice-form');
 const createError = document.querySelector('#create-error');
 const pdfInput = document.querySelector('#pdf');
+const board = document.querySelector('#board');
+const toggleLibrary = document.querySelector('#toggle-library');
+const LIBRARY_KEY = 'vox-library-hidden';
 
 let mode = 'signin';
 
@@ -88,6 +91,7 @@ function showApp(profile) {
   authScreen.hidden = true;
   appScreen.hidden = false;
   userEmail.textContent = profile.username || profile.email;
+  setLibraryHidden(localStorage.getItem(LIBRARY_KEY) === '1');
   loadLibrary();
 }
 
@@ -127,6 +131,27 @@ function bindAudio(node, job) {
   if (ready) audio.src = job.audioUrl;
 }
 
+function closeMenus() {
+  document.querySelectorAll('.menu-pop').forEach((menu) => {
+    menu.hidden = true;
+  });
+}
+
+function setLibraryHidden(hidden) {
+  board.classList.toggle('library-hidden', hidden);
+  toggleLibrary.setAttribute('aria-label', hidden ? 'Show library' : 'Hide library');
+  toggleLibrary.title = hidden ? 'Show library' : 'Hide library';
+  localStorage.setItem(LIBRARY_KEY, hidden ? '1' : '0');
+}
+
+async function deleteJob(chunkId) {
+  if (!window.confirm('Delete this audio from your library?')) return;
+  await api(`/api/chunks/${chunkId}`, { method: 'DELETE', headers: authHeaders() });
+  const node = jobs.querySelector(`[data-id="${chunkId}"]`);
+  node?.remove();
+  empty.hidden = jobs.children.length > 0;
+}
+
 function renderJob(job) {
   const node = template.content.firstElementChild.cloneNode(true);
   node.dataset.id = job.chunkId;
@@ -134,6 +159,27 @@ function renderJob(job) {
   node.querySelector('small').textContent = statusLabel(job);
   node.querySelector('.mark').hidden = job.status !== 'ready';
   bindAudio(node, job);
+
+  const menuPop = node.querySelector('.menu-pop');
+  const download = node.querySelector('.menu-download');
+  node.querySelector('.menu-btn').addEventListener('click', (event) => {
+    event.stopPropagation();
+    const open = !menuPop.hidden;
+    closeMenus();
+    menuPop.hidden = open;
+  });
+  if (job.status === 'ready' && job.audioUrl) {
+    download.href = job.audioUrl;
+    download.download = `${job.title || job.chunkId}.mp3`;
+    download.hidden = false;
+  } else {
+    download.hidden = true;
+  }
+  node.querySelector('.menu-delete').addEventListener('click', (event) => {
+    event.stopPropagation();
+    closeMenus();
+    deleteJob(job.chunkId).catch((error) => showError(createError, error.message));
+  });
   return node;
 }
 
@@ -264,6 +310,10 @@ document.querySelector('#sign-out').addEventListener('click', showAuth);
 document.querySelector('#refresh').addEventListener('click', () => {
   loadLibrary().catch((error) => showError(createError, error.message));
 });
+toggleLibrary.addEventListener('click', () => {
+  setLibraryHidden(!board.classList.contains('library-hidden'));
+});
+document.addEventListener('click', closeMenus);
 
 voiceForm.addEventListener('submit', async (event) => {
   event.preventDefault();
