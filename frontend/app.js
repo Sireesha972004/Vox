@@ -21,9 +21,6 @@ const template = document.querySelector('#job-template');
 const voiceForm = document.querySelector('#voice-form');
 const createError = document.querySelector('#create-error');
 const pdfInput = document.querySelector('#pdf');
-const board = document.querySelector('#board');
-const toggleLibrary = document.querySelector('#toggle-library');
-const LIBRARY_KEY = 'vox-library-hidden';
 
 let mode = 'signin';
 
@@ -91,7 +88,6 @@ function showApp(profile) {
   authScreen.hidden = true;
   appScreen.hidden = false;
   userEmail.textContent = profile.username || profile.email;
-  setLibraryHidden(localStorage.getItem(LIBRARY_KEY) === '1');
   loadLibrary();
 }
 
@@ -126,22 +122,11 @@ function statusLabel(job) {
 
 function bindAudio(node, job) {
   const audio = node.querySelector('audio');
+  const dots = node.querySelector('.dots-menu');
   const ready = job.status === 'ready' && job.audioUrl;
   audio.hidden = !ready;
+  dots.hidden = !ready;
   if (ready) audio.src = job.audioUrl;
-}
-
-function closeMenus() {
-  document.querySelectorAll('.menu-pop').forEach((menu) => {
-    menu.hidden = true;
-  });
-}
-
-function setLibraryHidden(hidden) {
-  board.classList.toggle('library-hidden', hidden);
-  toggleLibrary.setAttribute('aria-label', hidden ? 'Show library' : 'Hide library');
-  toggleLibrary.title = hidden ? 'Show library' : 'Hide library';
-  localStorage.setItem(LIBRARY_KEY, hidden ? '1' : '0');
 }
 
 async function deleteJob(chunkId) {
@@ -157,27 +142,11 @@ function renderJob(job) {
   node.dataset.id = job.chunkId;
   node.querySelector('strong').textContent = job.title || job.text || 'Untitled';
   node.querySelector('small').textContent = statusLabel(job);
+  node.querySelector('small').hidden = job.status === 'ready';
   node.querySelector('.mark').hidden = job.status !== 'ready';
   bindAudio(node, job);
-
-  const menuPop = node.querySelector('.menu-pop');
-  const download = node.querySelector('.menu-download');
-  node.querySelector('.menu-btn').addEventListener('click', (event) => {
-    event.stopPropagation();
-    const open = !menuPop.hidden;
-    closeMenus();
-    menuPop.hidden = open;
-  });
-  if (job.status === 'ready' && job.audioUrl) {
-    download.href = job.audioUrl;
-    download.download = `${job.title || job.chunkId}.mp3`;
-    download.hidden = false;
-  } else {
-    download.hidden = true;
-  }
   node.querySelector('.menu-delete').addEventListener('click', (event) => {
     event.stopPropagation();
-    closeMenus();
     deleteJob(job.chunkId).catch((error) => showError(createError, error.message));
   });
   return node;
@@ -201,6 +170,7 @@ async function poll(id) {
     const node = jobs.querySelector(`[data-id="${id}"]`);
     if (!node) return;
     node.querySelector('small').textContent = statusLabel(job);
+    node.querySelector('small').hidden = job.status === 'ready';
     node.querySelector('.mark').hidden = job.status !== 'ready';
     bindAudio(node, job);
     if (job.status === 'ready') return;
@@ -310,10 +280,6 @@ document.querySelector('#sign-out').addEventListener('click', showAuth);
 document.querySelector('#refresh').addEventListener('click', () => {
   loadLibrary().catch((error) => showError(createError, error.message));
 });
-toggleLibrary.addEventListener('click', () => {
-  setLibraryHidden(!board.classList.contains('library-hidden'));
-});
-document.addEventListener('click', closeMenus);
 
 voiceForm.addEventListener('submit', async (event) => {
   event.preventDefault();
