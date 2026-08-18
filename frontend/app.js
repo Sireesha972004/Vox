@@ -99,7 +99,12 @@ function showAuth() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch {
+    throw new Error('Could not reach the server. Please try again.');
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data.detail;

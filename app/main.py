@@ -1,16 +1,17 @@
 import json
 from io import BytesIO
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from uuid import uuid4
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.tts import AUDIO_DIR, generate_audio_file
+from app.tts import AUDIO_DIR, generate_audio_file_sync
 
 
 app = FastAPI(title="Vox API")
@@ -107,7 +108,10 @@ def load_chunks() -> None:
 
 
 def persist_chunks() -> None:
-    JOBS_PATH.write_text(json.dumps(chunks, indent=2), encoding="utf-8")
+    try:
+        JOBS_PATH.write_text(json.dumps(chunks, indent=2), encoding="utf-8")
+    except OSError as error:
+        print(f"Could not save jobs: {error}")
 
 
 def upsert_job(chunk_id: str, **fields: str) -> dict[str, str]:
@@ -154,13 +158,17 @@ def issue_token(email: str) -> dict[str, str]:
     return {"token": token, "email": email, "username": username}
 
 
-async def process_chunk(chunk_id: str, text: str, voice: str) -> None:
+def process_chunk(chunk_id: str, text: str, voice: str) -> None:
     try:
-        await generate_audio_file(text, chunk_id, voice)
+        generate_audio_file_sync(text, chunk_id, voice)
         upsert_job(chunk_id, status="ready")
     except Exception as error:
         upsert_job(chunk_id, status="failed", error="Could not generate audio.")
         print(f"Audio generation failed for {chunk_id}: {error}")
+
+
+def start_chunk_job(chunk_id: str, text: str, voice: str) -> None:
+    Thread(target=process_chunk, args=(chunk_id, text, voice), daemon=True).start()
 
 
 init_users()
@@ -170,6 +178,11 @@ load_chunks()
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.post("/api/register")
@@ -273,9 +286,8 @@ async def extract_text(
 
 
 @app.post("/api/chunks", status_code=202)
-async def create_chunk(
+def create_chunk(
     chunk: ChunkRequest,
-    background_tasks: BackgroundTasks,
     email: str = Depends(current_email),
 ) -> dict[str, str]:
     chunk_id = chunk.chunk_id or str(uuid4())
@@ -287,7 +299,7 @@ async def create_chunk(
         text=chunk.text,
         status="queued",
     )
-    background_tasks.add_task(process_chunk, chunk_id, chunk.text, chunk.voice)
+    start_chunk_job(chunk_id, chunk.text, chunk.voice)
     return job
 
 
