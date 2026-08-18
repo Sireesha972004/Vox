@@ -1,0 +1,6 @@
+requirements.txt text eol=lf working-tree-encoding=UTF-8
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+Procfile text eol=lf
