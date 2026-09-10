@@ -3,125 +3,299 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Vox</title>
-    <link rel="stylesheet" href="styles.css?v=10">
+    <title>Voice Output Experience</title>
+    <link rel="stylesheet" href="styles.css?v=16">
   </head>
   <body>
     <div id="auth-screen">
       <header class="topbar">
-        <a class="logo" href="/">Vox</a>
       </header>
       <section class="auth-wrap">
         <article class="auth-card">
-          <p class="kicker">Voice generation</p>
-          <h1 class="auth-title">Turn words into<br><span class="auth-accent">audio.</span></h1>
-          <p class="lede">Write a script, generate an audio file, and keep track of every request in one clean workspace.</p>
-          <div class="mode-pills" id="mode-pills" role="tablist">
-            <button type="button" class="mode-pill on" data-mode="signin">Sign in</button>
-            <button type="button" class="mode-pill" data-mode="register">Register</button>
-          </div>
-          <form id="auth-form">
-            <label id="username-row">
-              Username
-              <input id="username" type="text" autocomplete="username" placeholder="Enter your username">
-            </label>
-            <label>
-              Email
-              <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-            </label>
-            <label id="password-row">
-              <span id="password-label">Password</span>
-              <span class="password-wrap">
-                <input id="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
-                <button type="button" class="eye" id="toggle-password" aria-label="Show password">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
-                </button>
-              </span>
-            </label>
-            <p id="forgot-row" class="auth-link-row">
-              <button type="button" class="text-link" id="forgot-link">Forgot password?</button>
-            </p>
-            <label id="confirm-row">
-              Confirm password
-              <input id="confirm" type="password" autocomplete="new-password" placeholder="Re-enter your password" minlength="12">
-            </label>
-            <p id="back-signin-row" class="auth-link-row" hidden>
-              <button type="button" class="text-link" id="back-signin">Back to sign in</button>
-            </p>
-            <p id="auth-error" class="form-error" hidden></p>
-            <button type="submit" id="auth-submit">Sign in</button>
-          </form>
+          <section class="auth-visual" aria-label="Voice Output Experience introduction">
+            <div class="leaf leaf-one"></div>
+            <div class="leaf leaf-two"></div>
+            <div class="leaf leaf-three"></div>
+            <p class="visual-mark">Voice Output Experience</p>
+            <div class="visual-copy">
+              <p class="visual-kicker">Voice generation</p>
+              <h1>Welcome<br><em>back.</em></h1>
+              <p>Turn your words into clear, natural audio in one calm workspace.</p>
+              <div class="visual-benefits">
+                <p>Convert text into realistic AI-powered voices.</p>
+                <p>Transform written content into engaging audio instantly.</p>
+                <p>Create natural speech with human-like voice quality.</p>
+                <p>Customize and generate audio for any purpose.</p>
+                <p>Bring your ideas to life through intelligent voice technology.</p>
+              </div>
+            </div>
+          </section>
+          <section class="auth-form-panel">
+            <p class="kicker">Your workspace</p>
+            <h2 class="auth-heading" id="auth-heading">Login</h2>
+            <p class="auth-intro">Create, save, and listen to your generated audio.</p>
+            <form id="auth-form">
+              <label id="username-row">
+                Username
+                <input id="username" type="text" autocomplete="username" placeholder="Enter your username">
+              </label>
+              <label>
+                Email
+                <input id="email" type="email" autocomplete="email" placeholder="Enter your email" required>
+              </label>
+              <label id="password-row">
+                <span id="password-label">Password</span>
+                <span class="password-wrap">
+                  <input id="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
+                  <button type="button" class="eye" id="toggle-password" aria-label="Show password">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </span>
+              </label>
+              <p id="forgot-row" class="auth-link-row">
+                <button type="button" class="text-link" id="forgot-link">Forgot password?</button>
+              </p>
+              <label id="confirm-row">
+                Confirm password
+                <input id="confirm" type="password" autocomplete="new-password" placeholder="Re-enter your password" minlength="12">
+              </label>
+              <p id="back-signin-row" class="auth-link-row" hidden>
+                <button type="button" class="text-link" id="back-signin">Back to sign in</button>
+              </p>
+              <p id="auth-error" class="form-error" hidden></p>
+              <button type="submit" id="auth-submit">Login</button>
+            </form>
+            <p class="auth-switch"><span id="auth-switch-message">Don't have an account?</span> <button type="button" class="text-link" id="create-account-link">Create account</button></p>
+          </section>
         </article>
       </section>
     </div>
 
     <div id="app-screen" hidden>
-      <header class="topbar app-top">
-        <a class="logo" href="/">Vox</a>
-        <button type="button" class="user-pill" id="sign-out" title="Sign out">
-          <span id="user-email"></span>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5 19c1.4-3.2 3.8-4.8 7-4.8s5.6 1.6 7 4.8"/></svg>
-        </button>
-      </header>
-      <main class="board">
-        <section class="panel library">
-          <div class="library-head">
-            <h2>Your library</h2>
-            <button type="button" class="ghost" id="refresh">Refresh</button>
+      <div class="shell">
+        <aside class="sidebar">
+          <div class="brand">
+            <span class="brand-mark">Vox</span>
+            <p class="brand-tag">A more human way to work with audio.</p>
           </div>
-          <div id="empty" class="empty">Your generated audio will appear here.</div>
-          <div id="jobs" class="jobs" aria-live="polite"></div>
-        </section>
-        <section class="panel create">
-          <p class="kicker">Create audio</p>
-          <p class="lede tight">Vox cleans the text, splits it into chunks, and speaks it back to you.</p>
-          <form id="voice-form">
-            <label>
-              Title
-              <input id="title" type="text" placeholder="Optional title">
-            </label>
-            <label>
-              Voice
-              <select id="voice">
-                <option>English Professional Reader</option>
-                <option>Foreign Country Reader</option>
-                <option>Hindi Reader</option>
-                <option>Tamil Reader</option>
-                <option>Telugu Reader</option>
-                <option>Kannada Reader</option>
-              </select>
-            </label>
-            <label>
-              Your text
-              <textarea id="text" maxlength="8000" placeholder="Paste any paragraph, notes, or article text here..." required></textarea>
-            </label>
-            <p id="create-error" class="form-error" hidden></p>
-            <div class="actions">
-              <button type="submit">Convert to voice</button>
-              <label class="ghost file-btn">
-                Upload PDF
-                <input id="pdf" type="file" accept=".pdf,.txt,.md" hidden>
-              </label>
+          <nav class="side-nav">
+            <button type="button" class="side-nav-item active" id="nav-library" data-nav="library">
+              <span class="side-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 16" width="16" height="16" aria-hidden="true"><defs><linearGradient id="g-navlib" x1="0" y1="0" x2="24" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#22c1c3"/><stop offset="35%" stop-color="#6a5cf5"/><stop offset="65%" stop-color="#b23cf0"/><stop offset="100%" stop-color="#f0608a"/></linearGradient></defs><g fill="url(#g-navlib)"><circle cx="1" cy="8" r="1"/><rect x="3" y="6" width="1.6" height="4" rx="0.8"/><rect x="5.6" y="3.5" width="1.6" height="9" rx="0.8"/><rect x="8.2" y="1" width="1.8" height="14" rx="0.9"/><rect x="10.9" y="0" width="1.8" height="16" rx="0.9"/><rect x="13.6" y="1" width="1.8" height="14" rx="0.9"/><rect x="16.3" y="3.5" width="1.6" height="9" rx="0.8"/><rect x="18.9" y="6" width="1.6" height="4" rx="0.8"/><circle cx="22.5" cy="8" r="1"/></g></svg></span> Library
+            </button>
+            <button type="button" class="side-nav-item" id="nav-profile" data-nav="profile">
+              <span class="side-nav-icon" aria-hidden="true">&#9673;</span> Profile
+            </button>
+            <button type="button" class="side-nav-item" id="nav-settings" data-nav="settings">
+              <span class="side-nav-icon" aria-hidden="true">&#9881;</span> Settings
+            </button>
+            <button type="button" class="side-nav-item" id="nav-notifications" data-nav="notifications">
+              <span class="side-nav-icon" aria-hidden="true">&#128276;</span> Notifications
+            </button>
+          </nav>
+          <button type="button" class="side-signout" id="sidebar-sign-out">
+            <span aria-hidden="true">&#8618;</span> Sign Out
+          </button>
+        </aside>
+        <div class="shell-main">
+          <header class="topbar app-top">
+            <a class="logo" href="/">Voice Output Experience</a>
+            <div class="profile-wrap">
+              <div class="user-pill" id="profile-toggle">
+                <img id="profile-avatar" class="profile-avatar" alt="">
+                <span id="profile-avatar-letter" class="profile-avatar-letter" aria-hidden="true"></span>
+                <span id="user-email"></span>
+              </div>
             </div>
-          </form>
-        </section>
-      </main>
+          </header>
+          <section class="profile-settings" id="profile-settings" hidden>
+            <aside class="settings-sidebar" aria-label="Account navigation">
+              <button type="button" class="settings-nav active" data-view="profile">&#9673; <span data-i18n="profile">Profile</span></button>
+              <button type="button" class="settings-nav" data-view="settings">&#9881; <span data-i18n="settings">Settings</span></button>
+              <div class="settings-subnav" id="settings-subnav">
+                <button type="button" class="settings-tab active" data-tab="appearance" data-i18n="appearance">Appearance</button>
+                <button type="button" class="settings-tab" data-tab="security" data-i18n="security">Security</button>
+              </div>
+              <button type="button" class="settings-nav sign-out-nav" id="settings-sign-out">&#8618; <span data-i18n="signOut">Sign Out</span></button>
+            </aside>
+            <div class="settings-content">
+              <div class="settings-head">
+                <div>
+                  <p class="kicker" id="settings-kicker">Profile</p>
+                  <h2 id="settings-title">Profile</h2>
+                  <p id="settings-description">Manage your personal information and profile image.</p>
+                </div>
+                  <button type="button" class="settings-back" id="close-settings" aria-label="Back to library"><span class="back-arrow" aria-hidden="true">&#8592;</span> <span data-i18n="backToLibrary">Back to library</span></button>
+              </div>
+              <div class="settings-panel" id="profile-panel">
+                <form id="profile-form" class="settings-form">
+                  <div class="profile-form-top">
+                    <div class="large-profile-avatar"><img id="profile-form-avatar" alt=""><span id="profile-form-avatar-letter">S</span><span class="avatar-lock">&#9107;</span></div>
+                    <div><strong id="profile-form-name">sireesha</strong><small>Member since Sep 2026</small></div>
+                    <label class="change-photo" data-i18n="changePhoto">Change Photo<input id="profile-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+                  </div>
+                  <div class="settings-fields">
+                    <label>Full Name<input id="profile-name-input" type="text" required></label>
+                    <label>Email Address<input id="profile-email-input" type="email" disabled></label>
+                  </div>
+                  <label class="settings-checkbox"><input id="remove-profile-image" type="checkbox"><span data-i18n="useInitial">Use my first letter instead</span></label>
+                  <p class="settings-note">No image is required. Your first name letter will be used automatically.</p>
+                  <p id="profile-error" class="form-error" hidden></p>
+                  <button type="submit">Save changes</button>
+                </form>
+              </div>
+              <div class="settings-panel settings-card-grid" id="appearance-panel" hidden>
+                <div class="theme-heading"><strong data-i18n="theme">Theme</strong><small data-i18n="themeDescription">Choose your preferred theme.</small></div>
+                <div class="theme-options" role="group" aria-label="Theme"><button type="button" class="theme-option selected" data-theme="light">&#9728;<strong data-i18n="light">Light</strong><span>&#9679;</span></button><button type="button" class="theme-option" data-theme="dark">&#9789;<strong data-i18n="dark">Dark</strong><span>&#9675;</span></button><button type="button" class="theme-option" data-theme="system">&#9633;<strong data-i18n="system">System</strong><span>&#9675;</span></button></div>
+                <label><span data-i18n="language">Language</span><select id="language-select"><option value="en">English</option><option value="hi">Hindi</option><option value="ta">Tamil</option><option value="te">Telugu</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="bn">Bengali</option><option value="mr">Marathi</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="ar">Arabic</option><option value="zh">Chinese</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="pt">Portuguese</option><option value="it">Italian</option><option value="ru">Russian</option><option value="tr">Turkish</option><option value="vi">Vietnamese</option><option value="id">Indonesian</option></select></label>
+              </div>
+              <div class="settings-panel security-grid" id="security-panel" hidden>
+                <form id="password-form" class="security-password settings-form"><h3>Change Password</h3><label>Current Password<input id="current-password" type="password" autocomplete="off" required></label><label>New Password<input id="new-password" type="password" autocomplete="new-password" minlength="12" required></label><label>Confirm New Password<input id="confirm-new-password" type="password" autocomplete="new-password" minlength="12" required></label><p id="password-message" class="form-error" hidden></p><button type="submit">Update Password</button></form>
+                <div class="security-card"><strong>&#9826; &nbsp; Two-Factor Authentication</strong><p>Add an extra layer of security to your account.</p><button type="button" class="ghost">Enable 2FA</button></div>
+                <div class="security-card"><strong>&#9635; &nbsp; Active Sessions</strong><p>Manage your logged-in devices.</p><button type="button" class="ghost">View Sessions</button></div>
+              </div>
+            </div>
+          </section>
+          <section class="notifications-panel" id="notifications-panel" hidden>
+            <div class="notifications-empty">
+              <span class="notifications-icon" aria-hidden="true">&#128276;</span>
+              <p class="kicker">Notifications</p>
+              <h2>You're all caught up</h2>
+              <p>We'll let you know here when there's something new about your audio.</p>
+              <button type="button" class="ghost" id="close-notifications"><span aria-hidden="true">&#8592;</span> Back to library</button>
+            </div>
+          </section>
+          <main class="board" id="workspace-board">
+            <section class="panel library">
+              <div class="library-top">
+                <p class="kicker">Audio</p>
+                <h2 data-app-i18n="library">Your library</h2>
+                <p class="lede tight">All your voice outputs in one place. Search, play, manage or create new audio.</p>
+              </div>
+              <div class="library-toolbar">
+                <label class="search-box">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input id="library-search" type="search" placeholder="Search audio files or titles...">
+                </label>
+                <button type="button" class="ghost" id="refresh" data-app-i18n="refresh">Refresh</button>
+              </div>
+              <div class="library-filters">
+                <div class="filter-pills" role="group" aria-label="Filter library">
+                  <button type="button" class="pill active" id="filter-all" data-filter="all">All <span id="count-all">(0)</span></button>
+                  <button type="button" class="pill" id="filter-favorites" data-filter="favorites">Favorites <span id="count-favorites">(0)</span></button>
+                </div>
+                <div class="library-controls">
+                  <select id="library-sort" class="sort-select" aria-label="Sort library">
+                    <option value="recent">Last modified</option>
+                    <option value="title">Title A&ndash;Z</option>
+                  </select>
+                  <div class="view-toggle" role="group" aria-label="Library view">
+                    <button type="button" class="view-btn active" id="view-list" data-view="list" aria-label="List view">&#9776;</button>
+                    <button type="button" class="view-btn" id="view-grid" data-view="grid" aria-label="Grid view">&#9638;</button>
+                  </div>
+                </div>
+              </div>
+              <div id="empty" class="empty" data-app-i18n="emptyLibrary">Your generated audio will appear here.</div>
+              <div id="jobs" class="jobs" aria-live="polite"></div>
+              <div class="library-pagination" id="library-pagination" hidden>
+                <span class="pagination-summary" id="pagination-summary"></span>
+                <div class="pagination-controls">
+                  <button type="button" id="page-prev" aria-label="Previous page">&#8249;</button>
+                  <span id="pagination-pages"></span>
+                  <button type="button" id="page-next" aria-label="Next page">&#8250;</button>
+                </div>
+              </div>
+            </section>
+            <section class="panel create">
+              <div class="create-head">
+                <span class="create-icon" aria-hidden="true">&#127908;</span>
+                <div>
+                  <p class="kicker" data-app-i18n="createAudio">Create audio</p>
+                  <p class="lede tight" data-app-i18n="createDescription">Voice Output Experience cleans the text, splits it into chunks, and speaks it back to you.</p>
+                </div>
+              </div>
+              <form id="voice-form">
+                <label>
+                  <span data-app-i18n="title">Title</span>
+                  <input id="title" type="text" placeholder="Optional title">
+                </label>
+                <label>
+                  <span data-app-i18n="voice">Voice</span>
+                  <select id="voice">
+                    <option>English Professional Reader</option>
+                    <option>Foreign Country Reader</option>
+                    <option>Hindi Reader</option>
+                    <option>Tamil Reader</option>
+                    <option>Telugu Reader</option>
+                    <option>Kannada Reader</option>
+                  </select>
+                </label>
+                <label>
+                  <span data-app-i18n="yourText">Your text</span>
+                  <textarea id="text" maxlength="200000" placeholder="Paste any paragraph, notes, or article text here..." required></textarea>
+                  <span class="char-counter" id="text-counter">0 / 200000</span>
+                </label>
+                <div class="source-row">
+                  <input id="source-url" type="url" placeholder="Paste a webpage URL (optional)">
+                  <button type="button" class="ghost" id="load-url" data-app-i18n="useUrl">Use URL</button>
+                </div>
+                <p id="create-error" class="form-error" hidden></p>
+                <div class="actions">
+                  <button type="submit" data-app-i18n="convert">Convert to voice</button>
+                  <label class="ghost file-btn">
+                    <span data-app-i18n="upload">Upload file</span>
+                    <input id="pdf" type="file" accept=".pdf,.doc,.docx,.txt,.md" hidden>
+                  </label>
+                </div>
+                <p class="upload-hint">Supports .pdf, .doc, .docx, .txt, .md (max 5 MB)</p>
+              </form>
+              <div class="tip-box" id="tip-box">
+                <span aria-hidden="true">&#128161;</span>
+                <div><strong>Tip</strong><p>For better results, use clear and well-structured text.</p></div>
+                <button type="button" class="tip-dismiss" id="tip-dismiss" aria-label="Dismiss tip">&times;</button>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
     </div>
 
     <template id="job-template">
       <article class="job">
+        <span class="job-icon" aria-hidden="true"><svg viewBox="0 0 24 16" width="18" height="18" aria-hidden="true"><defs><linearGradient id="g-job" x1="0" y1="0" x2="24" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#22c1c3"/><stop offset="35%" stop-color="#6a5cf5"/><stop offset="65%" stop-color="#b23cf0"/><stop offset="100%" stop-color="#f0608a"/></linearGradient></defs><g fill="url(#g-job)"><circle cx="1" cy="8" r="1"/><rect x="3" y="6" width="1.6" height="4" rx="0.8"/><rect x="5.6" y="3.5" width="1.6" height="9" rx="0.8"/><rect x="8.2" y="1" width="1.8" height="14" rx="0.9"/><rect x="10.9" y="0" width="1.8" height="16" rx="0.9"/><rect x="13.6" y="1" width="1.8" height="14" rx="0.9"/><rect x="16.3" y="3.5" width="1.6" height="9" rx="0.8"/><rect x="18.9" y="6" width="1.6" height="4" rx="0.8"/><circle cx="22.5" cy="8" r="1"/></g></svg></span>
         <div class="job-copy">
           <strong></strong>
           <small></small>
         </div>
-        <audio controls preload="none" hidden></audio>
-        <div class="dots-menu" hidden>
-          <button type="button" class="dots-btn" aria-label="More">⋮</button>
-          <button type="button" class="menu-delete">Delete</button>
+        <audio preload="metadata" hidden></audio>
+        <div class="player-controls" hidden>
+          <button type="button" class="player-play" aria-label="Play audio">
+            <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></svg>
+            <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>
+          </button>
+          <div class="player-timeline">
+            <input class="player-progress" type="range" min="0" max="100" value="0" aria-label="Audio progress">
+            <div class="player-times">
+              <span class="player-time">0:00</span>
+              <span class="player-duration">0:00</span>
+            </div>
+          </div>
+          <span class="now-playing" hidden aria-hidden="true"><i></i><i></i><i></i></span>
         </div>
-        <span class="mark" hidden>✓</span>
+        <button type="button" class="favorite-btn" aria-label="Add to favorites" aria-pressed="false" hidden>
+          <svg class="star-outline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m12 3 2.6 5.8 6.4.6-4.8 4.2 1.4 6.2L12 16.8 6.4 19.8l1.4-6.2-4.8-4.2 6.4-.6L12 3Z"/></svg>
+          <svg class="star-filled" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.6 5.8 6.4.6-4.8 4.2 1.4 6.2L12 16.8 6.4 19.8l1.4-6.2-4.8-4.2 6.4-.6L12 3Z"/></svg>
+        </button>
+        <div class="dots-menu" hidden>
+          <button type="button" class="dots-btn" aria-label="Audio actions" aria-expanded="false">&#8942;</button>
+          <div class="audio-menu">
+            <button type="button" class="menu-speed">Speed 1x</button>
+            <a class="menu-download" download>Download</a>
+            <button type="button" class="menu-delete">Delete</button>
+          </div>
+        </div>
+        <span class="mark" hidden>&#10003;</span>
       </article>
     </template>
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=13"></script>
   </body>
 </html>
