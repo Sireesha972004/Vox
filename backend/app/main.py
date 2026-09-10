@@ -23,7 +23,7 @@ import requests
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 
-from app.tts import AUDIO_DIR, TextTooLongError, audio_path, generate_audio_file_sync, text_stats, validate_text_length
+from app.tts import TextTooLongError, generate_audio_file_sync, text_stats, validate_text_length
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -36,7 +36,6 @@ password_hasher = PasswordHasher()
 users_lock = Lock()
 jobs_lock = Lock()
 tokens: dict[str, str] = {}
-AUDIO_DIR.mkdir(exist_ok=True)
 
 
 class ChunkRequest(BaseModel):
@@ -113,6 +112,10 @@ def init_database() -> None:
             )
             """
         )
+        # Local files are lost on a production restart while job metadata is
+        # retained in PostgreSQL. Store the final MP3 with its job instead.
+        cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_data BYTEA")
+        cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_content_type TEXT")
 
 
 def get_user(email: str) -> dict[str, str] | None:
@@ -148,7 +151,7 @@ def ensure_user(email: str, password: str, username: str = "") -> dict[str, str]
     return user
 
 
-def upsert_job(chunk_id: str, **fields: str) -> dict[str, str]:
+def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
     with jobs_lock:
         with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("SELECT * FROM jobs WHERE chunk_id = %s", (chunk_id,))
@@ -157,8 +160,11 @@ def upsert_job(chunk_id: str, **fields: str) -> dict[str, str]:
             job["audio_url"] = f"/audio/{chunk_id}.mp3"
             cursor.execute(
                 """
-                INSERT INTO jobs (chunk_id, email, title, voice, text, status, error, audio_url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO jobs (
+                    chunk_id, email, title, voice, text, status, error, audio_url,
+                    audio_data, audio_content_type
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (chunk_id) DO UPDATE SET
                     email = EXCLUDED.email,
                     title = EXCLUDED.title,
@@ -166,7 +172,9 @@ def upsert_job(chunk_id: str, **fields: str) -> dict[str, str]:
                     text = EXCLUDED.text,
                     status = EXCLUDED.status,
                     error = EXCLUDED.error,
-                    audio_url = EXCLUDED.audio_url
+                    audio_url = EXCLUDED.audio_url,
+                    audio_data = EXCLUDED.audio_data,
+                    audio_content_type = EXCLUDED.audio_content_type
                 """,
                 (
                     chunk_id,
@@ -177,20 +185,30 @@ def upsert_job(chunk_id: str, **fields: str) -> dict[str, str]:
                     job.get("status", "queued"),
                     job.get("error"),
                     job["audio_url"],
+                    job.get("audio_data"),
+                    job.get("audio_content_type"),
                 ),
             )
         return serialize_job(job)
 
 
-def serialize_job(job: dict[str, str]) -> dict[str, str]:
+def serialize_job(job: dict[str, object]) -> dict[str, str]:
+    has_audio = bool(job.get("audio_data"))
+    status = str(job.get("status", "queued"))
+    error = str(job.get("error") or "")
+    # Jobs created before persistent storage have no MP3 after a deployment.
+    # Do not render a player that can only return a confusing 404.
+    if status == "ready" and not has_audio:
+        status = "failed"
+        error = "The audio file is no longer available. Please convert the content again."
     return {
         "chunkId": job["chunk_id"],
         "email": job.get("email", ""),
         "title": job.get("title", ""),
         "voice": job.get("voice", ""),
         "text": job.get("text", ""),
-        "status": job.get("status", "queued"),
-        "error": job.get("error") or "",
+        "status": status,
+        "error": error,
         "audioUrl": job.get("audio_url", f"/audio/{job['chunk_id']}.mp3"),
     }
 
@@ -220,15 +238,28 @@ def issue_token(email: str) -> dict[str, str]:
 
 
 def process_chunk(chunk_id: str, text: str, voice: str) -> None:
+    generated_path = None
     try:
-        generate_audio_file_sync(text, chunk_id, voice)
-        upsert_job(chunk_id, status="ready")
+        generated_path = Path(generate_audio_file_sync(text, chunk_id, voice))
+        audio_data = generated_path.read_bytes()
+        if not audio_data:
+            raise RuntimeError("Audio generation produced an empty file.")
+        upsert_job(
+            chunk_id,
+            status="ready",
+            error=None,
+            audio_data=audio_data,
+            audio_content_type="audio/mpeg",
+        )
     except (RuntimeError, ValueError) as error:
         upsert_job(chunk_id, status="failed", error=str(error) or "Could not generate audio.")
         logger.warning("Audio generation failed for %s: %s", chunk_id, error)
     except Exception as error:
         upsert_job(chunk_id, status="failed", error="Could not generate audio. Please try again.")
         logger.exception("Unexpected audio generation failure for %s", chunk_id)
+    finally:
+        if generated_path and generated_path.exists():
+            generated_path.unlink()
 
 
 def start_chunk_job(chunk_id: str, text: str, voice: str) -> None:
@@ -569,11 +600,24 @@ def delete_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str
     with jobs_lock:
         with connect_db() as connection, connection.cursor() as cursor:
             cursor.execute("DELETE FROM jobs WHERE chunk_id = %s AND email = %s", (chunk_id, email))
-    path = audio_path(chunk_id)
-    if path.exists():
-        path.unlink()
     return {"chunkId": chunk_id, "status": "deleted"}
 
 
-app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
+@app.get("/audio/{chunk_id}.mp3")
+def get_audio(chunk_id: str) -> Response:
+    with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(
+            "SELECT audio_data, audio_content_type FROM jobs WHERE chunk_id = %s",
+            (chunk_id,),
+        )
+        record = cursor.fetchone()
+    if not record or not record["audio_data"]:
+        raise HTTPException(status_code=404, detail="Audio file not found.")
+    return Response(
+        content=bytes(record["audio_data"]),
+        media_type=record["audio_content_type"] or "audio/mpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

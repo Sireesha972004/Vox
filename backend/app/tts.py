@@ -6,7 +6,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
-AUDIO_DIR = Path(__file__).resolve().parent.parent / "audio"
+# Audio is only staged here while it is generated. The API persists the final
+# MP3 in PostgreSQL, so deployments never depend on a repository-local audio
+# directory that disappears when an instance restarts.
+AUDIO_DIR = Path(os.getenv("VOX_TEMP_AUDIO_DIR", tempfile.gettempdir())) / "vox-audio"
 DEFAULT_VOICE = "en-US-JennyNeural"
 EDGE_VOICES = {
     "English Professional Reader": "en-US-JennyNeural",
