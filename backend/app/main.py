@@ -30,6 +30,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("vox.main")
 app = FastAPI(title="Voice Output Experience API")
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+# Kept only as a one-time import source for installations created before
+# audio was persisted in PostgreSQL. New audio is never written here.
+LEGACY_AUDIO_DIR = Path(__file__).resolve().parent.parent / "audio"
 DATABASE_URL = "postgresql://postgres:pr8THefr2jUPhubraDAQ@20.84.90.11:5432/Vox"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 password_hasher = PasswordHasher()
@@ -116,6 +119,29 @@ def init_database() -> None:
         # retained in PostgreSQL. Store the final MP3 with its job instead.
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_data BYTEA")
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_content_type TEXT")
+
+
+def import_legacy_audio() -> None:
+    """Persist MP3s left by pre-production releases before their directory is removed."""
+    if not LEGACY_AUDIO_DIR.is_dir():
+        return
+    imported = 0
+    with connect_db() as connection, connection.cursor() as cursor:
+        for path in LEGACY_AUDIO_DIR.glob("*.mp3"):
+            data = path.read_bytes()
+            if not data:
+                continue
+            cursor.execute(
+                """
+                UPDATE jobs
+                SET audio_data = %s, audio_content_type = 'audio/mpeg'
+                WHERE chunk_id = %s AND audio_data IS NULL
+                """,
+                (data, path.stem),
+            )
+            imported += cursor.rowcount
+    if imported:
+        logger.info("Imported %d legacy audio file(s) into PostgreSQL.", imported)
 
 
 def get_user(email: str) -> dict[str, str] | None:
@@ -267,6 +293,7 @@ def start_chunk_job(chunk_id: str, text: str, voice: str) -> None:
 
 
 init_database()
+import_legacy_audio()
 
 
 @app.get("/health")
@@ -398,8 +425,30 @@ async def update_profile(
 def library(email: str = Depends(current_email)) -> list[dict[str, str]]:
     with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute("SELECT * FROM jobs WHERE email = %s ORDER BY created_at DESC", (email,))
-        jobs = cursor.fetchall()
-    return [serialize_job(dict(job)) for job in jobs]
+        jobs = [dict(job) for job in cursor.fetchall()]
+
+    # Older deployments stored only job metadata. If the source text is still
+    # available, regenerate the missing MP3 automatically rather than showing
+    # a permanent, broken player.
+    for job in jobs:
+        if job["status"] != "ready" or job.get("audio_data") or not job.get("text"):
+            continue
+        with jobs_lock:
+            with connect_db() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'queued', error = NULL
+                    WHERE chunk_id = %s AND email = %s
+                      AND status = 'ready' AND audio_data IS NULL
+                    """,
+                    (job["chunk_id"], email),
+                )
+                restored = cursor.rowcount == 1
+        if restored:
+            job["status"] = "queued"
+            start_chunk_job(job["chunk_id"], job["text"], job["voice"])
+    return [serialize_job(job) for job in jobs]
 
 
 NON_CONTENT_TAGS = {

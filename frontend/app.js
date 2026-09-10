@@ -613,6 +613,9 @@ async function loadLibrary() {
   allJobs = await api('/api/library', { headers: authHeaders() });
   libraryPage = 1;
   renderLibraryView();
+  // Legacy items can be restored asynchronously after a deployment. Keep
+  // their status current until audio generation finishes.
+  allJobs.filter((job) => job.status === 'queued').forEach((job) => poll(job.chunkId));
 }
 
 async function poll(id) {
