@@ -103,6 +103,15 @@ def init_database() -> None:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image_type TEXT")
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                token TEXT PRIMARY KEY,
+                email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS jobs (
                 chunk_id TEXT PRIMARY KEY,
                 email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
@@ -255,15 +264,26 @@ def normalize_email(email: str) -> str:
 def current_email(authorization: str | None = Header(default=None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Sign in required.")
-    email = tokens.get(authorization.split(" ", 1)[1])
-    if not email:
+    token = authorization.split(" ", 1)[1]
+    # Tokens must be shared by local and production instances. Keeping them
+    # only in a process dictionary signs users out after a deploy or when a
+    # load balancer routes the request to another instance.
+    with connect_db() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT email FROM auth_tokens WHERE token = %s", (token,))
+        record = cursor.fetchone()
+    if not record:
         raise HTTPException(status_code=401, detail="Sign in required.")
-    return email
+    return record[0]
 
 
 def issue_token(email: str) -> dict[str, str]:
     token = str(uuid4())
     tokens[token] = email
+    with connect_db() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO auth_tokens (token, email) VALUES (%s, %s)",
+            (token, email),
+        )
     record = get_user(email)
     username = record["username"].strip() if record else ""
     return {"token": token, "email": email, "username": username}
