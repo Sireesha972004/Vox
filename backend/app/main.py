@@ -29,6 +29,7 @@ from app.tts import AUDIO_DIR, TextTooLongError, audio_path, generate_audio_file
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("vox.main")
 app = FastAPI(title="Voice Output Experience API")
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 DATABASE_URL = "postgresql://postgres:pr8THefr2jUPhubraDAQ@20.84.90.11:5432/Vox"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 password_hasher = PasswordHasher()
@@ -575,4 +576,4 @@ def delete_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str
 
 
 app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
