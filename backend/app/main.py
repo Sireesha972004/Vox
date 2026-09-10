@@ -45,6 +45,7 @@ class ChunkRequest(BaseModel):
     text: str = Field(min_length=1)
     title: str = ""
     voice: str = "Hindi Reader"
+    source_url: str = Field(default="", alias="sourceUrl")
     chunk_id: str | None = Field(default=None, alias="chunkId")
 
 
@@ -111,6 +112,7 @@ def init_database() -> None:
                 status TEXT NOT NULL,
                 error TEXT,
                 audio_url TEXT NOT NULL,
+                source_url TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
@@ -119,6 +121,7 @@ def init_database() -> None:
         # retained in PostgreSQL. Store the final MP3 with its job instead.
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_data BYTEA")
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_content_type TEXT")
+        cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT ''")
 
 
 def import_legacy_audio() -> None:
@@ -187,10 +190,10 @@ def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
             cursor.execute(
                 """
                 INSERT INTO jobs (
-                    chunk_id, email, title, voice, text, status, error, audio_url,
+                    chunk_id, email, title, voice, text, status, error, audio_url, source_url,
                     audio_data, audio_content_type
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (chunk_id) DO UPDATE SET
                     email = EXCLUDED.email,
                     title = EXCLUDED.title,
@@ -199,6 +202,7 @@ def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
                     status = EXCLUDED.status,
                     error = EXCLUDED.error,
                     audio_url = EXCLUDED.audio_url,
+                    source_url = EXCLUDED.source_url,
                     audio_data = EXCLUDED.audio_data,
                     audio_content_type = EXCLUDED.audio_content_type
                 """,
@@ -211,6 +215,7 @@ def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
                     job.get("status", "queued"),
                     job.get("error"),
                     job["audio_url"],
+                    job.get("source_url", ""),
                     job.get("audio_data"),
                     job.get("audio_content_type"),
                 ),
@@ -233,6 +238,7 @@ def serialize_job(job: dict[str, object]) -> dict[str, str]:
         "title": job.get("title", ""),
         "voice": job.get("voice", ""),
         "text": job.get("text", ""),
+        "sourceUrl": job.get("source_url", ""),
         "status": status,
         "error": error,
         "audioUrl": job.get("audio_url", f"/audio/{job['chunk_id']}.mp3"),
@@ -618,6 +624,7 @@ def create_chunk(
         title=chunk.title or chunk.text[:48],
         voice=chunk.voice,
         text=chunk.text,
+        source_url=chunk.source_url,
         status="queued",
     )
     start_chunk_job(chunk_id, chunk.text, chunk.voice)

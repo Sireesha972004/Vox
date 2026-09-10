@@ -873,18 +873,37 @@ voiceForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   showError(createError, '');
   const button = voiceForm.querySelector('button[type="submit"]');
-  const text = document.querySelector('#text').value.trim();
-  const title = document.querySelector('#title').value.trim();
+  let text = document.querySelector('#text').value.trim();
+  let title = document.querySelector('#title').value.trim();
   const voice = document.querySelector('#voice').value;
-  if (!text) return;
+  const url = sourceUrl.value.trim();
+  if (!text && !url) {
+    showError(createError, 'Paste text or enter a webpage URL.');
+    return;
+  }
   button.disabled = true;
   try {
+    // Convert supports a URL directly; users no longer have to remember to
+    // press "Use URL" before pressing "Convert to voice".
+    if (!text && url) {
+      const extracted = await api('/api/extract-url', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ url }),
+      });
+      text = extracted.text || '';
+      title ||= extracted.title || '';
+      if (!text) throw new Error('Could not extract readable text from this URL.');
+      document.querySelector('#text').value = text;
+      document.querySelector('#title').value = title;
+      updateTextCounter();
+    }
     const job = await api('/api/chunks', {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ text, title, voice }),
+      body: JSON.stringify({ text, title, voice, sourceUrl: url }),
     });
-    allJobs.unshift({ ...job, title: job.title || title || text, text });
+    allJobs.unshift({ ...job, title: job.title || title || text, text, sourceUrl: url });
     libraryFilter = 'all';
     document.querySelectorAll('.filter-pills .pill').forEach((pill) => pill.classList.toggle('active', pill.dataset.filter === 'all'));
     librarySearch = '';
