@@ -358,8 +358,7 @@ function openSettings(view = 'profile', tab = 'account') {
   profileSettings.hidden = false;
   appScreen.classList.add('settings-open');
   setActiveNav(view === 'profile' ? 'profile' : 'settings');
-  document.querySelectorAll('.settings-nav').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
-  document.querySelector('#settings-subnav').hidden = view !== 'settings';
+  document.querySelector('#settings-tabs').hidden = view !== 'settings';
   document.querySelector('#profile-panel').hidden = view !== 'profile';
   document.querySelector('#appearance-panel').hidden = view !== 'settings' || tab !== 'appearance';
   document.querySelector('#security-panel').hidden = view !== 'settings' || tab !== 'security';
@@ -735,15 +734,9 @@ authForm.addEventListener('submit', async (event) => {
   }
 });
 
-document.querySelectorAll('.settings-nav[data-view]').forEach((button) => {
-  button.addEventListener('click', () => {
-    openSettings(button.dataset.view, button.dataset.view === 'settings' ? 'appearance' : 'profile');
-  });
-});
 document.querySelectorAll('.settings-tab').forEach((button) => {
   button.addEventListener('click', () => openSettings('settings', button.dataset.tab));
 });
-document.querySelector('#settings-sign-out').addEventListener('click', showAuth);
 document.querySelector('#close-settings').addEventListener('click', showLibrary);
 document.querySelectorAll('.theme-option').forEach((button) => {
   button.addEventListener('click', () => {

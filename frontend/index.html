@@ -112,15 +112,6 @@
             </div>
           </header>
           <section class="profile-settings" id="profile-settings" hidden>
-            <aside class="settings-sidebar" aria-label="Account navigation">
-              <button type="button" class="settings-nav active" data-view="profile">&#9673; <span data-i18n="profile">Profile</span></button>
-              <button type="button" class="settings-nav" data-view="settings">&#9881; <span data-i18n="settings">Settings</span></button>
-              <div class="settings-subnav" id="settings-subnav">
-                <button type="button" class="settings-tab active" data-tab="appearance" data-i18n="appearance">Appearance</button>
-                <button type="button" class="settings-tab" data-tab="security" data-i18n="security">Security</button>
-              </div>
-              <button type="button" class="settings-nav sign-out-nav" id="settings-sign-out">&#8618; <span data-i18n="signOut">Sign Out</span></button>
-            </aside>
             <div class="settings-content">
               <div class="settings-head">
                 <div>
@@ -129,6 +120,10 @@
                   <p id="settings-description">Manage your personal information and profile image.</p>
                 </div>
                   <button type="button" class="settings-back" id="close-settings" aria-label="Back to library"><span class="back-arrow" aria-hidden="true">&#8592;</span> <span data-i18n="backToLibrary">Back to library</span></button>
+              </div>
+              <div class="settings-tabs" id="settings-tabs" hidden>
+                <button type="button" class="settings-tab active" data-tab="appearance" data-i18n="appearance">Appearance</button>
+                <button type="button" class="settings-tab" data-tab="security" data-i18n="security">Security</button>
               </div>
               <div class="settings-panel" id="profile-panel">
                 <form id="profile-form" class="settings-form">

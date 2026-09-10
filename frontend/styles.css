@@ -1185,6 +1185,14 @@ body.dark-theme .create-icon { background: #29302b; }
   .library-controls { justify-content: space-between; }
 }
 
+/* Profile and Settings are selected from the main navigation; no nested sidebar. */
+#app-screen .profile-settings { display:block; width:min(1120px,calc(100% - 48px)); min-height:0; margin:20px auto 64px; }
+#app-screen .settings-content { padding:38px 42px 56px; }
+.settings-tabs { display:flex; gap:8px; margin:-8px 0 22px; border-bottom:1px solid #e5edf0; }
+.settings-tabs .settings-tab { width:auto; padding:10px 14px; border-radius:8px 8px 0 0; color:#59728a; font-size:13px; }
+.settings-tabs .settings-tab.active { color:#087e70; background:#eaf8f5; }
+@media (max-width:760px) { #app-screen .profile-settings { width:min(100% - 24px,680px); } #app-screen .settings-content { padding:26px 18px 36px; } }
+
 /* Dashboard visual refresh — presentation only; application selectors and behavior remain unchanged. */
 #app-screen { --ink:#123147; --muted:#59728a; --line:#d8e6ee; --paper:#f7fcfd; --card:#fff; --green:#087e70; --green-hover:#056658; --kicker:#397a80; --accent:#f04463; background:linear-gradient(140deg,#f8feff 0%,#effbfa 52%,#eaf8fb 100%); }
 #app-screen .shell { min-height:100vh; }
