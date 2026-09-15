@@ -192,15 +192,15 @@ function toggleFavorite(chunkId) {
   return favorites.has(chunkId);
 }
 
-function applyTheme(theme = localStorage.getItem(THEME_KEY) || 'light') {
-  const useDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  document.body.classList.toggle('dark-theme', useDark);
+function applyTheme() {
+  document.body.classList.remove('dark-theme');
+  localStorage.setItem(THEME_KEY, 'light');
   document.querySelectorAll('.theme-option').forEach((button) => {
-    button.classList.toggle('selected', button.dataset.theme === theme);
+    button.classList.add('selected');
     const marker = button.querySelector('span');
-    if (marker) marker.textContent = button.dataset.theme === theme ? '●' : '○';
+    if (marker) marker.textContent = '●';
   });
-  return theme;
+  return 'light';
 }
 
 function applyLanguage(language = localStorage.getItem(LANGUAGE_KEY) || 'en') {
@@ -228,11 +228,6 @@ function applyLanguage(language = localStorage.getItem(LANGUAGE_KEY) || 'en') {
   }
   localStorage.setItem(LANGUAGE_KEY, value);
 }
-
-const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
-systemTheme.addEventListener?.('change', () => {
-  if (localStorage.getItem(THEME_KEY) === 'system') applyTheme('system');
-});
 
 function token() {
   return localStorage.getItem(TOKEN_KEY);
@@ -413,15 +408,19 @@ function bindAudio(node, job) {
   const favoriteBtn = node.querySelector('.favorite-btn');
   const speed = node.querySelector('.menu-speed');
   const download = node.querySelector('.menu-download');
+  const refresh = node.querySelector('.menu-refresh');
   const ready = job.status === 'ready' && job.audioUrl;
   const failed = job.status === 'failed';
+  const generating = job.status === 'queued';
   audio.hidden = !ready;
   player.hidden = !ready;
   // Failed jobs get no player, but still need a way to remove them from the library.
-  dots.hidden = !(ready || failed);
+  // Jobs stuck generating get a way to retry or remove them too.
+  dots.hidden = !(ready || failed || generating);
   favoriteBtn.hidden = !ready;
   speed.hidden = !ready;
   download.hidden = !ready;
+  refresh.hidden = !generating;
   if (!ready) return;
   audio.src = job.audioUrl;
   audio.load();
@@ -443,6 +442,24 @@ async function deleteJob(chunkId) {
   await api(`/api/chunks/${chunkId}`, { method: 'DELETE', headers: authHeaders() });
   allJobs = allJobs.filter((job) => job.chunkId !== chunkId);
   renderLibraryView();
+}
+
+async function refreshJob(job) {
+  const updated = await api('/api/chunks', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      chunkId: job.chunkId,
+      text: job.text,
+      title: job.title,
+      voice: job.voice,
+      sourceUrl: job.sourceUrl,
+    }),
+  });
+  const jobIndex = allJobs.findIndex((item) => item.chunkId === job.chunkId);
+  if (jobIndex !== -1) allJobs[jobIndex] = { ...allJobs[jobIndex], ...updated };
+  renderLibraryView();
+  poll(job.chunkId);
 }
 
 function renderJob(job, index = 0) {
@@ -547,6 +564,11 @@ function renderJob(job, index = 0) {
   });
   node.querySelector('.menu-download').addEventListener('click', () => {
     node.querySelector('.audio-menu').classList.remove('is-open');
+  });
+  node.querySelector('.menu-refresh').addEventListener('click', (event) => {
+    event.stopPropagation();
+    node.querySelector('.audio-menu').classList.remove('is-open');
+    refreshJob(job).catch((error) => showError(createError, error.message));
   });
   node.querySelector('.menu-delete').addEventListener('click', (event) => {
     event.stopPropagation();
@@ -739,10 +761,7 @@ document.querySelectorAll('.settings-tab').forEach((button) => {
 });
 document.querySelector('#close-settings').addEventListener('click', showLibrary);
 document.querySelectorAll('.theme-option').forEach((button) => {
-  button.addEventListener('click', () => {
-    localStorage.setItem(THEME_KEY, button.dataset.theme);
-    applyTheme(button.dataset.theme);
-  });
+  button.addEventListener('click', () => applyTheme());
 });
 document.querySelector('#language-select').addEventListener('change', (event) => {
   applyLanguage(event.currentTarget.value);

@@ -450,7 +450,16 @@ async def update_profile(
 @app.get("/api/library")
 def library(email: str = Depends(current_email)) -> list[dict[str, str]]:
     with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute("SELECT * FROM jobs WHERE email = %s ORDER BY created_at DESC", (email,))
+        # audio_data holds the full MP3 (often several MB per job). The list view
+        # only needs to know whether audio exists, never the bytes themselves.
+        cursor.execute(
+            """
+            SELECT chunk_id, email, title, voice, text, status, error, audio_url, source_url,
+                   created_at, (audio_data IS NOT NULL) AS audio_data
+            FROM jobs WHERE email = %s ORDER BY created_at DESC
+            """,
+            (email,),
+        )
         jobs = [dict(job) for job in cursor.fetchall()]
 
     # Older deployments stored only job metadata. If the source text is still
@@ -659,7 +668,14 @@ def chunk_ready(chunk: ChunkReady) -> dict[str, str]:
 @app.get("/api/chunks/{chunk_id}")
 def get_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str, str]:
     with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute("SELECT * FROM jobs WHERE chunk_id = %s AND email = %s", (chunk_id, email))
+        cursor.execute(
+            """
+            SELECT chunk_id, email, title, voice, text, status, error, audio_url, source_url,
+                   (audio_data IS NOT NULL) AS audio_data
+            FROM jobs WHERE chunk_id = %s AND email = %s
+            """,
+            (chunk_id, email),
+        )
         record = cursor.fetchone()
     if not record:
         return {"chunkId": chunk_id, "status": "unknown"}
