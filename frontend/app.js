@@ -398,7 +398,19 @@ async function api(path, options = {}) {
 function statusLabel(job) {
   if (job.status === 'ready') return 'Ready · tap play';
   if (job.status === 'failed') return 'Audio generation failed';
+  if (typeof job.progress === 'number') return `Generating audio... ${job.progress}%`;
   return 'Generating audio...';
+}
+
+function formatTime(value) {
+  const totalSeconds = Math.floor(value || 0);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 function bindAudio(node, job) {
@@ -427,6 +439,24 @@ function bindAudio(node, job) {
   download.href = job.audioUrl;
   audio.playbackRate = 1;
   speed.textContent = 'Speed 1x';
+  // Stored on the node (not just closed over) so a later poll() update -- which
+  // calls bindAudio again with fresh job data -- keeps this current even though
+  // the player's own event listeners were bound once at initial render.
+  if (typeof job.durationSeconds === 'number') {
+    node.dataset.durationSeconds = String(job.durationSeconds);
+  } else {
+    delete node.dataset.durationSeconds;
+  }
+  // Write the label directly instead of waiting for the audio element's own
+  // loadedmetadata/timeupdate events -- those may fire much later (or with a
+  // wrong estimate) for these concatenated files, which is why a job that
+  // just finished generating could keep showing a stale "0:00" until some
+  // unrelated event happened to refresh it.
+  const durationEl = node.querySelector('.player-duration');
+  if (durationEl) {
+    const stored = Number(node.dataset.durationSeconds);
+    durationEl.textContent = Number.isFinite(stored) && stored > 0 ? formatTime(stored) : '--:--';
+  }
 }
 
 function closeAudioMenus(exceptMenu) {
@@ -516,19 +546,58 @@ function renderJob(job, index = 0) {
   const duration = node.querySelector('.player-duration');
   const playIcon = node.querySelector('.play-icon');
   const pauseIcon = node.querySelector('.pause-icon');
-  const formatTime = (value) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+  // The final audio is multiple TTS chunks concatenated together, so it has no
+  // single valid VBR/duration header covering the whole thing. Before enough
+  // of the file has streamed in, the browser doesn't just fail to report a
+  // duration -- it can report a finite-but-wrong guess (e.g. extrapolating
+  // from only the first part), which is worse than not having one and is why
+  // this looked inconsistent across renders (each page navigation destroys
+  // and recreates the <audio> element, so this "wrong guess" phase happens
+  // again). The value measured server-side from the real, complete file is
+  // always correct, so it takes priority whenever we have it; the browser's
+  // own reading is only a fallback for older jobs generated before this was
+  // tracked.
+  const getKnownDuration = () => {
+    const storedDuration = Number(node.dataset.durationSeconds);
+    if (Number.isFinite(storedDuration) && storedDuration > 0) return storedDuration;
+    return Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+  };
   const syncPlayer = () => {
     playerPlay.setAttribute('aria-label', audio.paused ? 'Play audio' : 'Stop audio');
     playIcon.classList.toggle('is-hidden', !audio.paused);
     pauseIcon.classList.toggle('is-hidden', audio.paused);
+    const knownDuration = getKnownDuration();
     time.textContent = formatTime(audio.currentTime);
-    duration.textContent = formatTime(audio.duration || 0);
-    progress.value = audio.duration ? String((audio.currentTime / audio.duration) * 100) : '0';
+    duration.textContent = knownDuration > 0 ? formatTime(knownDuration) : '--:--';
+    progress.value = knownDuration ? String((audio.currentTime / knownDuration) * 100) : '0';
   };
-  playerPlay.addEventListener('click', () => {
-    if (audio.paused) {
-      audio.play().catch(() => showError(createError, 'Could not play this audio.'));
+  // audio.paused flips to false the instant play() is called, before playback
+  // has actually started -- for a large file that takes a moment to buffer, a
+  // second click reads as "pause" and aborts the still-pending play() promise,
+  // which surfaced as a misleading "Could not play this audio." error. Track
+  // the in-flight promise so a rapid second click waits for it to settle
+  // first instead of racing it.
+  let playPromise = null;
+  playerPlay.addEventListener('click', async () => {
+    if (audio.paused && !playPromise) {
+      playPromise = audio.play();
+      try {
+        await playPromise;
+      } catch (error) {
+        if (error?.name !== 'AbortError') {
+          showError(createError, 'Could not play this audio.');
+        }
+      } finally {
+        playPromise = null;
+      }
     } else {
+      if (playPromise) {
+        try {
+          await playPromise;
+        } catch {
+          // Already reported above if it wasn't a benign abort; nothing more to do.
+        }
+      }
       audio.pause();
       audio.currentTime = 0;
       syncPlayer();
@@ -539,7 +608,8 @@ function renderJob(job, index = 0) {
   audio.addEventListener('play', syncPlayer);
   audio.addEventListener('pause', syncPlayer);
   progress.addEventListener('input', () => {
-    if (audio.duration) audio.currentTime = (Number(progress.value) / 100) * audio.duration;
+    const knownDuration = getKnownDuration();
+    if (knownDuration) audio.currentTime = (Number(progress.value) / 100) * knownDuration;
   });
   const nowPlaying = node.querySelector('.now-playing');
   audio.addEventListener('play', () => {
@@ -557,7 +627,7 @@ function renderJob(job, index = 0) {
   node.querySelector('.menu-speed').addEventListener('click', (event) => {
     event.stopPropagation();
     const audio = node.querySelector('audio');
-    const speeds = [0.75, 1, 1.25, 1.5, 2];
+    const speeds = [0.75, 1, 1.25, 1.5, 1.75, 2];
     const nextIndex = (speeds.indexOf(audio.playbackRate) + 1) % speeds.length;
     audio.playbackRate = speeds[nextIndex];
     event.currentTarget.textContent = `Speed ${speeds[nextIndex]}x`;
@@ -640,8 +710,12 @@ async function loadLibrary() {
 }
 
 async function poll(id) {
-  for (let i = 0; i < 60; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  // Large documents can take a while even with concurrent chunk generation.
+  // Poll quickly at first for short jobs, then back off so a big document
+  // isn't abandoned mid-generation (~20s fast + ~10min backed off).
+  const maxAttempts = 220;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, i < 20 ? 1000 : 3000));
     const job = await api(`/api/chunks/${id}`, { headers: authHeaders() });
     const jobIndex = allJobs.findIndex((item) => item.chunkId === id);
     if (jobIndex !== -1) allJobs[jobIndex] = { ...allJobs[jobIndex], ...job };
@@ -768,6 +842,10 @@ document.querySelector('#language-select').addEventListener('change', (event) =>
 });
 document.querySelector('#password-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  // event.currentTarget is cleared by the browser once synchronous dispatch
+  // finishes, so it reads as null after the "await" below settles -- capture
+  // the form itself now, not through the event, or resetting it throws.
+  const form = event.currentTarget;
   const message = document.querySelector('#password-message');
   const currentPassword = document.querySelector('#current-password').value;
   const newPassword = document.querySelector('#new-password').value;
@@ -782,7 +860,7 @@ document.querySelector('#password-form').addEventListener('submit', async (event
       headers: authHeaders(),
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     });
-    event.currentTarget.reset();
+    form.reset();
     showError(message, result.message, true);
   } catch (error) {
     showError(message, error.message);

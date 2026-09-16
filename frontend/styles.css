@@ -66,6 +66,7 @@ body {
 .auth-visual {
   position: relative;
   display: flex;
+  flex-direction: column;
   min-height: 560px;
   overflow: hidden;
   padding: 34px;
@@ -74,19 +75,21 @@ body {
 }
 
 .visual-mark {
-  position: absolute;
-  top: 34px;
-  left: 50%;
+  position: relative;
   z-index: 2;
+  align-self: center;
   margin: 0;
+  /* align-self only centers the element's own box in the panel -- once the
+     text is long enough to wrap onto two lines, each line defaults to
+     left-aligned within that box unless the text itself is told to center. */
+  text-align: center;
   font: 700 34px Fraunces, Georgia, serif;
-  transform: translateX(-50%);
 }
 
 .visual-copy {
   position: relative;
   z-index: 2;
-  align-self: flex-end;
+  margin-top: 140px;
   max-width: 240px;
 }
 
@@ -777,7 +780,13 @@ body.dark-theme .user-pill { background: #fff; color: #111; border-color: #555b5
   width: 100%;
   min-height: 100vh;
   padding: 0;
-  overflow: hidden;
+  /* visible, not hidden: the right column below uses position:sticky to stay
+     centered in the viewport independent of how tall the left column's
+     content is, and a hidden-overflow ancestor breaks sticky's positioning
+     context. The card no longer needs clipping -- it has no rounded corners
+     or shadow to trim in this fullscreen layout (.auth-visual already clips
+     its own decorative leaves). */
+  overflow: visible;
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -785,31 +794,55 @@ body.dark-theme .user-pill { background: #fff; color: #111; border-color: #555b5
 
 #auth-screen .auth-visual {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
   padding: 48px;
   background: linear-gradient(145deg, #236d50, #5f9838 54%, #c0d6a9);
 }
 
 #auth-screen .visual-mark {
-  top: 48px;
-  font-size: 42px;
+  font-size: clamp(50px, 6vw, 90px);
 }
 
 #auth-screen .visual-copy {
   display: block;
-  align-self: flex-end;
   max-width: 430px;
-  transform: translateY(-32px);
+  /* A fixed offset from the wordmark above it, not "auto" (which pinned this
+     to the bottom of a 100vh-tall box). Anchoring to the viewport height
+     meant opening DevTools -- or any viewport resize -- visibly shifted this
+     text, since 100vh recalculates. A fixed margin keeps it in the exact
+     same spot on screen no matter how tall the viewport is. */
+  margin-top: 300px;
 }
 
 #auth-screen .visual-copy h1 {
   font-size: clamp(50px, 6vw, 90px);
 }
 
+/* Centers the card in the CURRENT viewport, not in the grid row's height --
+   the row grows to match whatever the left column's content needs, and
+   centering directly on .auth-form-panel via align-self only centered it
+   within that (often taller-than-the-screen) row, not the visible viewport.
+   Sticky + its own 100vh pins this column to the viewport regardless of the
+   left column's height. */
+#auth-screen .auth-form-column {
+  position: sticky;
+  top: 0;
+  /* min-height, not height: if the card is ever taller than the viewport
+     (a very short window), a fixed height would center-and-overflow it
+     equally top and bottom -- pushing the heading above y=0 with no way to
+     scroll up to it. Letting the box grow with its content instead means
+     centering has no free space left to distribute, so the card just
+     renders at its natural size, fully reachable by scrolling normally. */
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
 #auth-screen .auth-form-panel {
-  align-self: center;
   width: min(560px, 100%);
-  margin: 0 auto;
   padding: 46px 48px 40px;
   border: 1px solid #e3e8e4;
   border-radius: 16px;
@@ -836,13 +869,21 @@ body.dark-theme .user-pill { background: #fff; color: #111; border-color: #555b5
 #auth-screen button[type="submit"] { background: var(--green); }
 #auth-screen button[type="submit"]:hover { background: var(--green-hover); }
 
+/* The form column now centers itself in the viewport independent of the
+   left column (see .auth-form-column above), so it no longer needs a
+   short-viewport override. Only the branding gap is trimmed here, purely so
+   its own content doesn't demand more scrolling than necessary on shorter
+   screens. */
+@media (max-height: 820px) {
+  #auth-screen .visual-copy { margin-top: 64px; }
+}
+
 @media (max-width: 860px) {
   .board, .topbar { width: min(100% - 28px, 1120px); }
   .board { grid-template-columns: 1fr; }
   .logo { font-size: 34px; }
   .auth-card { grid-template-columns: 1fr; }
   .auth-visual { min-height: 260px; padding: 26px; }
-  .visual-copy { align-self: flex-end; }
   .visual-copy h1 { font-size: 42px; }
   .auth-form-panel { padding: 34px 24px 30px; }
   .auth-title { letter-spacing: -2px; }
@@ -850,11 +891,23 @@ body.dark-theme .user-pill { background: #fff; color: #111; border-color: #555b5
   #auth-screen .auth-wrap { padding: 0; }
   #auth-screen .auth-card {
     grid-template-columns: 1fr;
+    /* align-content: start -- otherwise Grid distributes the leftover space
+       between .auth-card's min-height:100vh and the two stacked rows' actual
+       content by stretching them, which on a tall narrow screen inflated the
+       green panel far past its own content (a big empty gap below the
+       benefits list) before the form panel ever appeared. Sizing each row to
+       its own content and letting the page scroll for the rest matches the
+       stacked-mobile design everywhere else already. */
+    align-content: start;
     min-height: 100vh;
     border: 0;
     border-radius: 0;
   }
   #auth-screen .auth-visual { min-height: 300px; }
+  #auth-screen .visual-copy { margin-top: 1000px; }
+  /* Single-column stacked layout: the form should flow normally below the
+     branding section, not stick to the viewport or self-center. */
+  #auth-screen .auth-form-column { position: static; height: auto; min-height: 0; padding: 0; }
   #auth-screen .auth-form-panel { padding: 40px 24px; }
 }
 

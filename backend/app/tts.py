@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from threading import Lock
 
 # Audio is only staged here while it is generated. The API persists the final
 # MP3 in PostgreSQL, so deployments never depend on a repository-local audio
@@ -30,12 +31,52 @@ EDGE_VOICES = {
 MAX_CHUNK_CHARS = int(os.getenv("VOX_TTS_CHUNK_CHARS", "3000"))
 CHUNK_TIMEOUT_SECONDS = int(os.getenv("VOX_TTS_CHUNK_TIMEOUT", "90"))
 MAX_TEXT_CHARS = int(os.getenv("VOX_MAX_TEXT_CHARS", "200000"))
+# Chunks are independent network calls to the edge-tts service, so they are
+# generated concurrently instead of one after another. Bounded so a long
+# document doesn't open dozens of simultaneous connections at once.
+MAX_CONCURRENT_CHUNKS = int(os.getenv("VOX_TTS_CONCURRENCY", "4"))
+# A single flaky/dropped connection out of dozens of concurrent chunk requests
+# should not fail an entire large document. Retry that one chunk before
+# giving up on the whole job.
+TTS_MAX_RETRIES = int(os.getenv("VOX_TTS_MAX_RETRIES", "2"))
+TTS_RETRY_BACKOFF_SECONDS = float(os.getenv("VOX_TTS_RETRY_BACKOFF_SECONDS", "1.5"))
 
 logger = logging.getLogger("vox.tts")
 
 
 class TextTooLongError(ValueError):
     pass
+
+
+# In-memory only: best-effort progress for the single process generating the
+# audio. If a job is polled from a different process/instance this simply
+# reports no progress yet; the authoritative status still comes from the jobs
+# table, so nothing depends on this for correctness.
+_progress_lock = Lock()
+_progress: dict[str, dict[str, int]] = {}
+
+
+def get_progress(chunk_id: str) -> dict[str, int] | None:
+    with _progress_lock:
+        state = _progress.get(chunk_id)
+        return dict(state) if state else None
+
+
+def _set_progress(chunk_id: str, total: int) -> None:
+    with _progress_lock:
+        _progress[chunk_id] = {"total": total, "completed": 0}
+
+
+def _mark_chunk_done(chunk_id: str) -> None:
+    with _progress_lock:
+        state = _progress.get(chunk_id)
+        if state:
+            state["completed"] += 1
+
+
+def _clear_progress(chunk_id: str) -> None:
+    with _progress_lock:
+        _progress.pop(chunk_id, None)
 
 
 def audio_path(chunk_id: str) -> Path:
@@ -126,9 +167,35 @@ def split_into_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
-async def generate_audio_file(text: str, chunk_id: str, voice: str) -> str:
+async def _generate_chunk_part(
+    chunk_text: str, part_path: Path, voice_id: str, semaphore: asyncio.Semaphore, chunk_id: str
+) -> None:
     from edge_tts import Communicate
 
+    last_error: Exception | None = None
+    for attempt in range(TTS_MAX_RETRIES + 1):
+        try:
+            async with semaphore:
+                await asyncio.wait_for(
+                    Communicate(chunk_text, voice_id).save(str(part_path)),
+                    timeout=CHUNK_TIMEOUT_SECONDS,
+                )
+            if not part_path.exists() or part_path.stat().st_size == 0:
+                raise RuntimeError("produced no audio")
+            _mark_chunk_done(chunk_id)
+            return
+        except Exception as error:
+            last_error = error
+            if attempt < TTS_MAX_RETRIES:
+                logger.warning(
+                    "tts_chunk_retry chunk_id=%s attempt=%d error=%s",
+                    chunk_id, attempt + 1, error,
+                )
+                await asyncio.sleep(TTS_RETRY_BACKOFF_SECONDS * (attempt + 1))
+    raise last_error
+
+
+async def generate_audio_file(text: str, chunk_id: str, voice: str) -> str:
     normalized = text.strip()
     if not normalized:
         raise ValueError("No text was provided to convert to audio.")
@@ -147,27 +214,27 @@ async def generate_audio_file(text: str, chunk_id: str, voice: str) -> str:
     voice_id = EDGE_VOICES.get(voice, DEFAULT_VOICE)
     final_path = audio_path(chunk_id)
     work_dir = Path(tempfile.mkdtemp(prefix=f"vox-{chunk_id}-"))
-    succeeded = 0
+    # Parts are written to files named by index, then combined in that order,
+    # so concurrent completion order never affects the final audio.
+    part_paths = [work_dir / f"part-{index:04d}.mp3" for index in range(len(chunks))]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHUNKS)
+    _set_progress(chunk_id, len(chunks))
     try:
-        part_paths: list[Path] = []
-        for index, chunk_text in enumerate(chunks):
-            part_path = work_dir / f"part-{index:04d}.mp3"
-            try:
-                await asyncio.wait_for(
-                    Communicate(chunk_text, voice_id).save(str(part_path)),
-                    timeout=CHUNK_TIMEOUT_SECONDS,
-                )
-            except Exception as error:
-                raise RuntimeError(
-                    f"Audio generation failed on part {index + 1} of {len(chunks)}. "
-                    f"{succeeded} of {len(chunks)} parts completed before the failure."
-                ) from error
-            if not part_path.exists() or part_path.stat().st_size == 0:
-                raise RuntimeError(
-                    f"Audio part {index + 1} of {len(chunks)} produced no audio."
-                )
-            part_paths.append(part_path)
-            succeeded += 1
+        results = await asyncio.gather(
+            *(
+                _generate_chunk_part(chunk_text, part_path, voice_id, semaphore, chunk_id)
+                for chunk_text, part_path in zip(chunks, part_paths)
+            ),
+            return_exceptions=True,
+        )
+        failures = [(index, error) for index, error in enumerate(results) if isinstance(error, Exception)]
+        if failures:
+            first_index, first_error = failures[0]
+            succeeded = len(chunks) - len(failures)
+            raise RuntimeError(
+                f"Audio generation failed on part {first_index + 1} of {len(chunks)}. "
+                f"{succeeded} of {len(chunks)} parts completed successfully."
+            ) from first_error
 
         with open(final_path, "wb") as combined:
             for part_path in part_paths:
@@ -186,11 +253,12 @@ async def generate_audio_file(text: str, chunk_id: str, voice: str) -> str:
         if final_path.exists():
             final_path.unlink()
         logger.warning(
-            "tts_failed chunk_id=%s completed_parts=%d total_parts=%d",
-            chunk_id, succeeded, len(chunks),
+            "tts_failed chunk_id=%s total_parts=%d",
+            chunk_id, len(chunks),
         )
         raise
     finally:
+        _clear_progress(chunk_id)
         shutil.rmtree(work_dir, ignore_errors=True)
 
 

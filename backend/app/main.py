@@ -2,9 +2,11 @@ from io import BytesIO
 from pathlib import Path
 import base64
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
+import time
 from threading import Lock, Thread
 from uuid import uuid4
 import zipfile
@@ -20,10 +22,17 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 import psycopg2
 import requests
+from psycopg2 import pool as psycopg2_pool
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 
-from app.tts import TextTooLongError, generate_audio_file_sync, text_stats, validate_text_length
+from app.tts import (
+    TextTooLongError,
+    generate_audio_file_sync,
+    get_progress,
+    text_stats,
+    validate_text_length,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -78,8 +87,75 @@ class UrlRequest(BaseModel):
     url: str = Field(min_length=8)
 
 
+# DATABASE_URL points at a remote server, where opening a fresh TCP+auth
+# connection for every single query previously cost ~1.5-2s per query (measured)
+# -- on top of the query itself. Nearly every request opens 2+ connections
+# (the current_email auth check, then the route's own query), so this alone
+# was the dominant cost behind a slow page refresh, not chunking or TTS.
+# A pool amortizes that cost across requests instead of paying it every time.
+DB_POOL_MIN = int(os.getenv("VOX_DB_POOL_MIN", "1"))
+DB_POOL_MAX = int(os.getenv("VOX_DB_POOL_MAX", "20"))
+# This remote link has been observed to silently drop connections mid-transfer
+# (no RST/FIN, no exception -- the socket just goes quiet). Without TCP
+# keepalives, a query on a connection like that hangs forever: nothing ever
+# times out, so the pool slot and its thread are lost until the process is
+# restarted. Keepalives only probe once a connection has gone idle, so they
+# never interrupt a large transfer that is still actively receiving data --
+# they only detect the case where the peer is already gone.
+_db_pool = psycopg2_pool.ThreadedConnectionPool(
+    DB_POOL_MIN,
+    DB_POOL_MAX,
+    DATABASE_URL,
+    keepalives=1,
+    keepalives_idle=20,
+    keepalives_interval=10,
+    keepalives_count=3,
+)
+
+# getconn() does not wait -- it raises PoolError immediately once every pooled
+# connection is checked out. A request that streams an unusually large audio
+# row (measured: 90MB took 12+ minutes over this link) can hold a connection
+# for that entire time, and every other in-flight request that needed one in
+# the meantime used to fail with an unhandled 500. A short retry lets a brief
+# burst clear on its own instead of failing every caller outright.
+DB_POOL_GETCONN_RETRIES = int(os.getenv("VOX_DB_POOL_GETCONN_RETRIES", "3"))
+DB_POOL_GETCONN_RETRY_DELAY_SECONDS = float(os.getenv("VOX_DB_POOL_GETCONN_RETRY_DELAY_SECONDS", "0.25"))
+
+
+def _acquire_pooled_connection():
+    last_error: Exception | None = None
+    for attempt in range(DB_POOL_GETCONN_RETRIES):
+        try:
+            return _db_pool.getconn()
+        except psycopg2_pool.PoolError as error:
+            last_error = error
+            if attempt < DB_POOL_GETCONN_RETRIES - 1:
+                time.sleep(DB_POOL_GETCONN_RETRY_DELAY_SECONDS)
+    raise last_error
+
+
+class _PooledConnection:
+    """Drop-in stand-in for psycopg2.connect(): every existing call site uses
+    it as `with connect_db() as connection`, which only ever relied on the
+    connection's own commit/rollback-on-exit behavior (psycopg2 connections
+    don't close themselves on `with` exit). This preserves that exact behavior
+    while returning the connection to the pool instead of leaving it to be
+    garbage-collected and reopened from scratch next time."""
+
+    def __enter__(self):
+        self._connection = _acquire_pooled_connection()
+        return self._connection.__enter__()
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return self._connection.__exit__(exc_type, exc, tb)
+        finally:
+            broken = self._connection.closed != 0 or isinstance(exc, psycopg2.OperationalError)
+            _db_pool.putconn(self._connection, close=broken)
+
+
 def connect_db():
-    return psycopg2.connect(DATABASE_URL)
+    return _PooledConnection()
 
 
 def init_database() -> None:
@@ -131,6 +207,9 @@ def init_database() -> None:
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_data BYTEA")
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_content_type TEXT")
         cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT ''")
+        # Read once from the generated MP3 when a job completes, so the frontend never
+        # has to guess a playable length from a file the browser can't reliably probe.
+        cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER")
 
 
 def import_legacy_audio() -> None:
@@ -200,9 +279,9 @@ def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
                 """
                 INSERT INTO jobs (
                     chunk_id, email, title, voice, text, status, error, audio_url, source_url,
-                    audio_data, audio_content_type
+                    audio_data, audio_content_type, duration_seconds
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (chunk_id) DO UPDATE SET
                     email = EXCLUDED.email,
                     title = EXCLUDED.title,
@@ -213,7 +292,8 @@ def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
                     audio_url = EXCLUDED.audio_url,
                     source_url = EXCLUDED.source_url,
                     audio_data = EXCLUDED.audio_data,
-                    audio_content_type = EXCLUDED.audio_content_type
+                    audio_content_type = EXCLUDED.audio_content_type,
+                    duration_seconds = EXCLUDED.duration_seconds
                 """,
                 (
                     chunk_id,
@@ -227,12 +307,13 @@ def upsert_job(chunk_id: str, **fields: object) -> dict[str, object]:
                     job.get("source_url", ""),
                     job.get("audio_data"),
                     job.get("audio_content_type"),
+                    job.get("duration_seconds"),
                 ),
             )
         return serialize_job(job)
 
 
-def serialize_job(job: dict[str, object]) -> dict[str, str]:
+def serialize_job(job: dict[str, object]) -> dict[str, object]:
     has_audio = bool(job.get("audio_data"))
     status = str(job.get("status", "queued"))
     error = str(job.get("error") or "")
@@ -241,7 +322,7 @@ def serialize_job(job: dict[str, object]) -> dict[str, str]:
     if status == "ready" and not has_audio:
         status = "failed"
         error = "The audio file is no longer available. Please convert the content again."
-    return {
+    result = {
         "chunkId": job["chunk_id"],
         "email": job.get("email", ""),
         "title": job.get("title", ""),
@@ -252,6 +333,18 @@ def serialize_job(job: dict[str, object]) -> dict[str, str]:
         "error": error,
         "audioUrl": job.get("audio_url", f"/audio/{job['chunk_id']}.mp3"),
     }
+    # Additive field; only present once known. Jobs created before this was
+    # tracked simply omit it and the frontend falls back to its prior behavior.
+    if job.get("duration_seconds") is not None:
+        result["durationSeconds"] = job["duration_seconds"]
+    # Best-effort only: reflects this process's in-memory chunk counter, so a
+    # request served by a different instance simply sees no progress yet.
+    # Additive field; existing clients that don't read it are unaffected.
+    if status == "queued":
+        progress = get_progress(str(job["chunk_id"]))
+        if progress and progress["total"]:
+            result["progress"] = round(100 * progress["completed"] / progress["total"])
+    return result
 
 
 def normalize_email(email: str) -> str:
@@ -289,6 +382,86 @@ def issue_token(email: str) -> dict[str, str]:
     return {"token": token, "email": email, "username": username}
 
 
+def audio_duration_seconds(path: Path) -> int | None:
+    # The final file is several independently-encoded TTS chunks concatenated
+    # together, so it has no single accurate duration header for a browser to
+    # read -- measure the actual generated audio once, here, while the file
+    # still exists on disk, instead of asking every client to guess.
+    try:
+        from mutagen.mp3 import MP3
+
+        return round(MP3(path).info.length)
+    except Exception as error:
+        logger.warning("Could not read audio duration for %s: %s", path, error)
+        return None
+
+
+def backfill_missing_durations() -> None:
+    # Rows created before the duration_seconds column existed have it stored
+    # as NULL even though their audio is complete and playable -- there was
+    # never a computation failure, the code that computes it simply didn't
+    # exist yet when they were generated. Left alone, the Library shows a
+    # permanent, incorrect "0:00" for these regardless of how many times the
+    # page is refreshed. Runs once at startup in a background thread (not the
+    # request path) since an old row can be a large file that takes a long
+    # time to fetch over this connection, and that must never block server
+    # startup or compete with live request traffic for the connection pool.
+    try:
+        with connect_db() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT chunk_id FROM jobs "
+                "WHERE status = 'ready' AND audio_data IS NOT NULL AND duration_seconds IS NULL"
+            )
+            chunk_ids = [row[0] for row in cursor.fetchall()]
+    except Exception:
+        logger.exception("duration_backfill_query_failed")
+        return
+
+    if not chunk_ids:
+        return
+
+    # This link has been observed to stall completely on a fetch mid-transfer
+    # (no error, no data, indefinitely) rather than just being slow. Without a
+    # bound, one bad row wedges this thread forever and every row queued
+    # behind it never gets backfilled. A server-side statement_timeout forces
+    # Postgres to cancel and error out if a single row's fetch runs past a
+    # generous ceiling, so the loop can log it and move on to the next row
+    # instead of hanging permanently. 20 minutes comfortably covers the
+    # slowest real fetch measured against this link (~12 minutes for 90MB).
+    BACKFILL_ROW_TIMEOUT_MS = int(os.getenv("VOX_DURATION_BACKFILL_ROW_TIMEOUT_MS", "1200000"))
+
+    logger.info("duration_backfill_start count=%d", len(chunk_ids))
+    for chunk_id in chunk_ids:
+        temp_path: Path | None = None
+        try:
+            with connect_db() as connection, connection.cursor() as cursor:
+                cursor.execute(f"SET statement_timeout = {BACKFILL_ROW_TIMEOUT_MS}")
+                cursor.execute("SELECT audio_data FROM jobs WHERE chunk_id = %s", (chunk_id,))
+                row = cursor.fetchone()
+            if not row or not row[0]:
+                continue
+            fd, temp_name = tempfile.mkstemp(suffix=".mp3")
+            temp_path = Path(temp_name)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(bytes(row[0]))
+            duration = audio_duration_seconds(temp_path)
+            if duration is None:
+                logger.warning("duration_backfill_skip chunk_id=%s reason=unreadable", chunk_id)
+                continue
+            with connect_db() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE jobs SET duration_seconds = %s WHERE chunk_id = %s",
+                    (duration, chunk_id),
+                )
+            logger.info("duration_backfill_done chunk_id=%s duration_seconds=%d", chunk_id, duration)
+        except Exception:
+            logger.exception("duration_backfill_failed chunk_id=%s", chunk_id)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+    logger.info("duration_backfill_complete")
+
+
 def process_chunk(chunk_id: str, text: str, voice: str) -> None:
     generated_path = None
     try:
@@ -302,6 +475,7 @@ def process_chunk(chunk_id: str, text: str, voice: str) -> None:
             error=None,
             audio_data=audio_data,
             audio_content_type="audio/mpeg",
+            duration_seconds=audio_duration_seconds(generated_path),
         )
     except (RuntimeError, ValueError) as error:
         upsert_job(chunk_id, status="failed", error=str(error) or "Could not generate audio.")
@@ -320,6 +494,7 @@ def start_chunk_job(chunk_id: str, text: str, voice: str) -> None:
 
 init_database()
 import_legacy_audio()
+Thread(target=backfill_missing_durations, daemon=True).start()
 
 
 @app.get("/health")
@@ -448,14 +623,14 @@ async def update_profile(
 
 
 @app.get("/api/library")
-def library(email: str = Depends(current_email)) -> list[dict[str, str]]:
+def library(email: str = Depends(current_email)) -> list[dict[str, object]]:
     with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
         # audio_data holds the full MP3 (often several MB per job). The list view
         # only needs to know whether audio exists, never the bytes themselves.
         cursor.execute(
             """
             SELECT chunk_id, email, title, voice, text, status, error, audio_url, source_url,
-                   created_at, (audio_data IS NOT NULL) AS audio_data
+                   duration_seconds, created_at, (audio_data IS NOT NULL) AS audio_data
             FROM jobs WHERE email = %s ORDER BY created_at DESC
             """,
             (email,),
@@ -570,6 +745,18 @@ def extract_uploaded_text(filename: str, data: bytes) -> str:
     return data.decode("utf-8", errors="ignore").strip()
 
 
+# A non-trivial source producing near-empty text usually means extraction only
+# grabbed a title/preview rather than the full content. Never blocks the request
+# (a source can legitimately be mostly images/markup) -- it's a signal for
+# operators so a bug like that doesn't silently ship partial audio.
+def warn_if_extraction_looks_incomplete(source: str, extracted_chars: int, source_bytes: int) -> None:
+    if source_bytes > 5000 and extracted_chars < max(200, source_bytes * 0.01):
+        logger.warning(
+            "extraction_looks_incomplete source=%s source_bytes=%d extracted_characters=%d",
+            source, source_bytes, extracted_chars,
+        )
+
+
 @app.post("/api/extract-text")
 async def extract_text(
     file: UploadFile = File(...),
@@ -595,6 +782,7 @@ async def extract_text(
         "extract_text filename=%s bytes=%d characters=%d words=%d paragraphs=%d",
         filename, len(data), stats["characters"], stats["words"], stats["paragraphs"],
     )
+    warn_if_extraction_looks_incomplete(filename, stats["characters"], len(data))
 
     return {"title": Path(filename).stem, "text": text}
 
@@ -626,6 +814,7 @@ def extract_url(body: UrlRequest, _email: str = Depends(current_email)) -> dict[
         "extract_url url=%s characters=%d words=%d paragraphs=%d",
         parsed.netloc, stats["characters"], stats["words"], stats["paragraphs"],
     )
+    warn_if_extraction_looks_incomplete(parsed.netloc, stats["characters"], len(response.content))
 
     title = parser.page_title.strip() or parsed.netloc
     return {"title": title[:120], "text": text}
@@ -635,7 +824,7 @@ def extract_url(body: UrlRequest, _email: str = Depends(current_email)) -> dict[
 def create_chunk(
     chunk: ChunkRequest,
     email: str = Depends(current_email),
-) -> dict[str, str]:
+) -> dict[str, object]:
     try:
         validate_text_length(chunk.text)
     except TextTooLongError as error:
@@ -666,12 +855,12 @@ def chunk_ready(chunk: ChunkReady) -> dict[str, str]:
 
 
 @app.get("/api/chunks/{chunk_id}")
-def get_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str, str]:
+def get_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str, object]:
     with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(
             """
             SELECT chunk_id, email, title, voice, text, status, error, audio_url, source_url,
-                   (audio_data IS NOT NULL) AS audio_data
+                   duration_seconds, (audio_data IS NOT NULL) AS audio_data
             FROM jobs WHERE chunk_id = %s AND email = %s
             """,
             (chunk_id, email),
@@ -696,20 +885,73 @@ def delete_chunk(chunk_id: str, email: str = Depends(current_email)) -> dict[str
 
 
 @app.get("/audio/{chunk_id}.mp3")
-def get_audio(chunk_id: str) -> Response:
-    with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(
-            "SELECT audio_data, audio_content_type FROM jobs WHERE chunk_id = %s",
-            (chunk_id,),
-        )
-        record = cursor.fetchone()
-    if not record or not record["audio_data"]:
+def get_audio(chunk_id: str, range_header: str | None = Header(default=None, alias="Range")) -> Response:
+    # Only length + content type up front -- one of these rows measured 90MB
+    # and took 12+ minutes to fetch in full over this connection. Pulling the
+    # whole blob just to answer a HEAD-ish metadata check (or a Range request
+    # for a few KB, which is what browsers send first) made every request for
+    # a large file that slow, and held a pooled connection the whole time.
+    try:
+        with connect_db() as connection, connection.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT length(audio_data) AS total, audio_content_type FROM jobs WHERE chunk_id = %s",
+                (chunk_id,),
+            )
+            record = cursor.fetchone()
+    except (psycopg2.OperationalError, psycopg2_pool.PoolError) as error:
+        logger.error("audio_fetch_db_error chunk_id=%s error=%s: %s", chunk_id, type(error).__name__, error)
+        raise HTTPException(
+            status_code=503,
+            detail="Audio is temporarily unavailable. Please try again in a moment.",
+        ) from error
+
+    if not record or record["total"] is None:
+        logger.info("audio_fetch_not_found chunk_id=%s", chunk_id)
         raise HTTPException(status_code=404, detail="Audio file not found.")
-    return Response(
-        content=bytes(record["audio_data"]),
-        media_type=record["audio_content_type"] or "audio/mpeg",
-        headers={"Cache-Control": "private, max-age=3600"},
-    )
+
+    content_type = record["audio_content_type"] or "audio/mpeg"
+    total = record["total"]
+    headers = {"Cache-Control": "private, max-age=3600", "Accept-Ranges": "bytes"}
+
+    # Without Range support the browser must download the entire file before it
+    # can start playing or seek, which made a large document's audio slow to
+    # become playable (and, in turn, made a second impatient click land while
+    # play() was still pending -- see the frontend player fix). Supporting
+    # partial content lets playback and seeking start from just the requested
+    # byte range instead.
+    try:
+        if range_header:
+            unit, _, range_spec = range_header.partition("=")
+            start_str, _, end_str = range_spec.partition("-")
+            try:
+                if unit != "bytes":
+                    raise ValueError
+                start = int(start_str) if start_str else 0
+                end = int(end_str) if end_str else total - 1
+                end = min(end, total - 1)
+                if start < 0 or start > end:
+                    raise ValueError
+            except ValueError:
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+            with connect_db() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT substring(audio_data FROM %s FOR %s) FROM jobs WHERE chunk_id = %s",
+                    (start + 1, end - start + 1, chunk_id),
+                )
+                chunk = cursor.fetchone()[0]
+            headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+            return Response(content=bytes(chunk), status_code=206, media_type=content_type, headers=headers)
+
+        with connect_db() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT audio_data FROM jobs WHERE chunk_id = %s", (chunk_id,))
+            data = cursor.fetchone()[0]
+        return Response(content=bytes(data), media_type=content_type, headers=headers)
+    except (psycopg2.OperationalError, psycopg2_pool.PoolError) as error:
+        logger.error("audio_fetch_db_error chunk_id=%s error=%s: %s", chunk_id, type(error).__name__, error)
+        raise HTTPException(
+            status_code=503,
+            detail="Audio is temporarily unavailable. Please try again in a moment.",
+        ) from error
 
 
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
