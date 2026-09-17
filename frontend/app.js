@@ -659,7 +659,7 @@ function getFilteredJobs() {
   let list = allJobs.filter((job) => {
     if (libraryFilter === 'favorites' && !favorites.has(job.chunkId)) return false;
     if (!query) return true;
-    return `${job.title || ''} ${job.text || ''}`.toLowerCase().includes(query);
+    return (job.title || '').toLowerCase().includes(query);
   });
   if (librarySort === 'title') {
     list = [...list].sort((a, b) => (a.title || a.text || '').localeCompare(b.title || b.text || ''));

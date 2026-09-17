@@ -1311,6 +1311,8 @@ body.dark-theme .create-icon { background: #29302b; }
 #app-screen .library-toolbar { margin-top:25px; }
 #app-screen .search-box { border-color:#d1e1e9; border-radius:999px; background:#fff; min-height:48px; }
 #app-screen .search-box input { color:#123147; }
+#app-screen .search-box:focus-within { border-color:#d1e1e9; }
+#app-screen .search-box input:focus { box-shadow:none; }
 #app-screen .ghost, #app-screen .file-btn { border-color:#d3e1e9; color:#176173; background:#fff; }
 #app-screen .ghost:hover, #app-screen .file-btn:hover { background:#effbfa; }
 #app-screen .pill, #app-screen .view-btn { border-color:#e0edf0; background:#f7fbfc; color:#38566c; }
